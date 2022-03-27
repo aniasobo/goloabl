@@ -1,12 +1,42 @@
 package goloabl
 
 import (
+	"encoding/json"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"sync"
 )
 
+type Config struct {
+	Proxy    Proxy     `json:"proxy"`
+	Backends []Backend `json:"backends`
+}
+
+// Proxy is a reverse proxy, i.e. a load balancer.
+type Proxy struct {
+	Port string `json:"port"`
+}
+
+// Backend is one of the servers serviced by the Proxy load balancer.
+type Backend struct {
+	URL    string `json:"url"`
+	IsDead bool
+	mu     sync.RWMutex
+}
+
+var config Config
+
+// Serve serves the load balancer.
 func Serve() {
+	data, err := ioutil.ReadFile("./config.json")
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	json.Unmarshal(data, &config)
+
 	// director must be a function which modifies
 	// the request into a new request to be sent
 	// using Transport. Its response is then copied
