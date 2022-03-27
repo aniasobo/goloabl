@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"sync"
 )
 
@@ -26,6 +27,27 @@ type Backend struct {
 	mu     sync.RWMutex
 }
 
+// Using sync.Mutex to avoid race conditions caused by
+// multiple goroutines accessing variables.
+var mu sync.Mutex
+var index int = 0
+
+func lbHandler(w http.ResponseWriter, req *http.Request) {
+	maxLen := len(config.Backends)
+
+	// implement Round Robin
+	mu.Lock()
+	// backend := config.Backends[index%maxLen]
+	targetURL, err := url.Parse(config.Backends[index%maxLen].URL)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	index++
+	mu.Unlock()
+	reverseProxy := httputil.NewSingleHostReverseProxy(targetURL)
+	reverseProxy.ServeHTTP(w, req)
+}
+
 var config Config
 
 // Serve serves the load balancer.
@@ -44,18 +66,14 @@ func Serve() {
 	// Director must not access the provided Request
 	// after returning.
 	// from: https://pkg.go.dev/net/http/httputil#ReverseProxy
-	director := func(req *http.Request) {
-		req.URL.Scheme = "http"
-		req.URL.Host = ":8081"
-	}
-
-	rp := &httputil.ReverseProxy{
-		Director: director,
-	}
+	// director := func(req *http.Request) {
+	// 	req.URL.Scheme = "http"
+	// 	req.URL.Host = ":8081"
+	// }
 
 	server := http.Server{
-		Addr:    ":8080",
-		Handler: rp,
+		Addr:    ":" + config.Proxy.Port,
+		Handler: http.HandlerFunc(lbHandler),
 	}
 
 	if err := server.ListenAndServe(); err != nil {
