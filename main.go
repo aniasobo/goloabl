@@ -27,6 +27,21 @@ type Backend struct {
 	mu     sync.RWMutex
 }
 
+// SetIsDead sets the value of IsDead in Backend.
+func (backend *Backend) SetIsDead(b bool) {
+	backend.mu.Lock()
+	backend.IsDead = b
+	backend.mu.Unlock()
+}
+
+// GetIsDead returns the value of IsDead in Backend.
+func (backend *Backend) GetIsDead() bool {
+	backend.mu.RLock()
+	vitals := backend.IsDead
+	backend.mu.RUnlock()
+	return vitals
+}
+
 // Using sync.Mutex to avoid race conditions caused by
 // multiple goroutines accessing variables.
 var mu sync.Mutex
@@ -37,7 +52,10 @@ func lbHandler(w http.ResponseWriter, req *http.Request) {
 
 	// implement Round Robin
 	mu.Lock()
-	// backend := config.Backends[index%maxLen]
+	backend := config.Backends[index%maxLen]
+	if backend.GetIsDead() {
+		index++
+	}
 	targetURL, err := url.Parse(config.Backends[index%maxLen].URL)
 	if err != nil {
 		log.Fatal(err.Error())
@@ -45,6 +63,11 @@ func lbHandler(w http.ResponseWriter, req *http.Request) {
 	index++
 	mu.Unlock()
 	reverseProxy := httputil.NewSingleHostReverseProxy(targetURL)
+	reverseProxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, e error) {
+		log.Printf("%v is dead.", targetURL)
+		backend.SetIsDead(true)
+		lbHandler(w, req)
+	}
 	reverseProxy.ServeHTTP(w, req)
 }
 
