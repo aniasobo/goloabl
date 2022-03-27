@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sync"
+	"time"
 )
 
 type Config struct {
@@ -71,6 +73,41 @@ func lbHandler(w http.ResponseWriter, req *http.Request) {
 	reverseProxy.ServeHTTP(w, req)
 }
 
+// IsAlive checks if the backend is alive.
+func isAlive(url *url.URL) bool {
+	connection, err := net.DialTimeout("tcp", url.Host, time.Minute*1)
+	if err != nil {
+		log.Printf("Unreachable to %v, error:", url.Host, err.Error())
+		return false
+	}
+
+	defer connection.Close()
+	return true
+}
+
+// healthCheck checks the vitals of the backend.
+func healthCheck() {
+	t := time.NewTicker(time.Minute * 1)
+	for {
+		select {
+		case <-t.C:
+			for _, backend := range config.Backends {
+				pingURL, err := url.Parse(backend.URL)
+				if err != nil {
+					log.Fatal(err.Error())
+				}
+				isAlive := isAlive(pingURL)
+				backend.SetIsDead(!isAlive)
+				msg := "ok"
+				if !isAlive {
+					msg = "dead"
+				}
+				log.Printf("%v checked %v by healthcheck", backend.URL, msg)
+			}
+		}
+	}
+}
+
 var config Config
 
 // Serve serves the load balancer.
@@ -81,6 +118,8 @@ func Serve() {
 	}
 
 	json.Unmarshal(data, &config)
+
+	go healthCheck()
 
 	// director must be a function which modifies
 	// the request into a new request to be sent
